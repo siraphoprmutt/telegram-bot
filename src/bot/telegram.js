@@ -10,7 +10,7 @@ if (!config.botToken) {
 
 const bot = new TelegramBot(config.botToken, { polling: true });
 
-// โหลดคำสั่งทั้งหมดจากโฟลเดอร์ commands
+// ===== โหลด commands =====
 const commandsDir = path.resolve("./src/bot/commands");
 const commandFiles = fs.readdirSync(commandsDir).filter(file => file.endsWith(".js"));
 
@@ -21,34 +21,44 @@ const validCommands = await Promise.all(
     })
 );
 
+// ===== โหลด callbacks =====
+const callbacksDir = path.resolve("./src/bot/callbacks");
+const callbackFiles = fs.readdirSync(callbacksDir).filter(file => file.endsWith(".js"));
+
+const callbackHandlers = await Promise.all(
+    callbackFiles.map(async file => {
+        const module = await import(`./callbacks/${file}`);
+        return module.default;
+    })
+);
+
 bot.on("polling_error", (error) => {
     console.error("Polling error:", error);
 });
 
+// ===== จัดการ callback_query =====
 bot.on("callback_query", async (query) => {
-    const { data, message, from } = query;
-    const chatId = message.chat.id;
+    const handler = callbackHandlers.find(cb => cb.data === query.data);
 
-    if (data === "view_profile") {
-        const username = from.username || "ไม่ทราบชื่อ";
-        const firstName = from.first_name || "-";
-        const lastName = from.last_name || "-";
-        const userId = from.id;
-
-        const profile = `👤 ข้อมูลผู้ใช้งาน:
-  🔹 ชื่อผู้ใช้: ${username}
-  🧑‍🦱 ชื่อต้น: ${firstName}
-  🧑‍🦰 นามสกุล: ${lastName}
-  🆔 ID: ${userId}`;
-
-        await bot.sendMessage(chatId, profile);
-
-        // ตอบ callback เพื่อให้ Telegram หยุด loading spinner
-        await bot.answerCallbackQuery(query.id);
+    if (handler) {
+        try {
+            await handler.handle(query, bot);
+        } catch (err) {
+            console.error("Callback error:", err);
+            await bot.answerCallbackQuery(query.id, {
+                text: "❗ เกิดข้อผิดพลาด",
+                show_alert: true,
+            });
+        }
+    } else {
+        await bot.answerCallbackQuery(query.id, {
+            text: "ไม่รู้จักคำสั่งนี้",
+            show_alert: true,
+        });
     }
 });
 
-
+// ===== จัดการข้อความธรรมดา =====
 bot.onText(/(.*)/, async (msg) => {
     const chatId = msg.chat.id;
     const message = msg.text.trim();
